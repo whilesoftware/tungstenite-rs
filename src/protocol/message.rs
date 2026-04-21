@@ -77,7 +77,16 @@ mod string_collect {
 }
 
 use self::string_collect::StringCollector;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
+
+pub(crate) fn concat_vec_bytes(vec: &[Bytes]) -> Bytes {
+    let total: usize = vec.iter().map(|b| b.len()).sum();
+    let mut buf = BytesMut::with_capacity(total);
+    for bytes in vec {
+        buf.extend_from_slice(bytes);
+    }
+    buf.freeze()
+}
 
 /// A struct representing the incomplete message.
 #[derive(Debug)]
@@ -159,6 +168,8 @@ pub enum Message {
     Text(Utf8Bytes),
     /// A binary WebSocket message
     Binary(Bytes),
+    /// Like Binary, but writes from a slice of buffers using write_vector
+    VecBinary(Vec<Bytes>),
     /// A ping message with the specified payload
     ///
     /// The payload here must have a length less than 125 bytes
@@ -188,6 +199,14 @@ impl Message {
         B: Into<Bytes>,
     {
         Message::Binary(bin.into())
+    }
+
+    /// Create a new vecBinary WebSocket message from a vector of `Bytes`.
+    pub fn vec_binary<B>(vec: Vec<B>) -> Message
+    where
+        B: Into<Bytes>,
+    {
+        Message::VecBinary(vec.into_iter().map(Into::into).collect())
     }
 
     /// Indicates whether a message is a text message.
@@ -222,6 +241,7 @@ impl Message {
             Message::Binary(ref data) | Message::Ping(ref data) | Message::Pong(ref data) => {
                 data.len()
             }
+            Message::VecBinary(ref vec) => vec.iter().map(|b| b.len()).sum(),
             Message::Close(ref data) => data.as_ref().map(|d| d.reason.len()).unwrap_or(0),
             Message::Frame(ref frame) => frame.len(),
         }
@@ -238,6 +258,7 @@ impl Message {
         match self {
             Message::Text(utf8) => utf8.into(),
             Message::Binary(data) | Message::Ping(data) | Message::Pong(data) => data,
+            Message::VecBinary(vec) => concat_vec_bytes(&vec),
             Message::Close(None) => <_>::default(),
             Message::Close(Some(frame)) => frame.reason.into(),
             Message::Frame(frame) => frame.into_payload(),
@@ -251,6 +272,7 @@ impl Message {
             Message::Binary(data) | Message::Ping(data) | Message::Pong(data) => {
                 Ok(data.try_into()?)
             }
+            Message::VecBinary(vec) => Ok(concat_vec_bytes(&vec).try_into()?),
             Message::Close(None) => Ok(<_>::default()),
             Message::Close(Some(frame)) => Ok(frame.reason),
             Message::Frame(frame) => Ok(frame.into_text()?),
@@ -264,6 +286,10 @@ impl Message {
             Message::Text(ref string) => Ok(string.as_str()),
             Message::Binary(ref data) | Message::Ping(ref data) | Message::Pong(ref data) => {
                 Ok(str::from_utf8(data)?)
+            }
+            Message::VecBinary(ref vec) => {
+                let first: &[u8] = vec.first().map(|b| b.as_ref()).unwrap_or(&[]);
+                Ok(str::from_utf8(first)?)
             }
             Message::Close(None) => Ok(""),
             Message::Close(Some(ref frame)) => Ok(&frame.reason),

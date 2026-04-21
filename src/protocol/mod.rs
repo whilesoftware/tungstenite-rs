@@ -503,6 +503,11 @@ impl WebSocketContext {
         let frame = match message {
             Message::Text(data) => Frame::message(data, OpCode::Data(OpData::Text), true),
             Message::Binary(data) => Frame::message(data, OpCode::Data(OpData::Binary), true),
+            Message::VecBinary(vec) => Frame::message(
+                crate::protocol::message::concat_vec_bytes(&vec),
+                OpCode::Data(OpData::Binary),
+                true,
+            ),
             Message::Ping(data) => Frame::ping(data),
             Message::Pong(data) => {
                 self.set_additional(Frame::pong(data));
